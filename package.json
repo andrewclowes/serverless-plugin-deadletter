@@ -1,0 +1,17 @@
+{
+  "name": "serverless-plugin-deadletterqueue",
+  "version": "1.0.0",
+  "description": "Plugin for adding DeadLetterQueue funcionality to Lambda functions that are invoked by asynchronous event sources.",
+  "main": "src/index.js",
+  "repository": {
+    "url": "https://github.com/andrewclowes/serverless-plugin-deadletterqueue",
+    "type": "git"
+  },
+  "author": "Andrew Clowes <andrew.trevor.clowes@googlemail.com>",
+  "license": "MIT",
+  "devDependencies": {},
+  "dependencies": {
+    "aws-sdk": "^2.7.21",
+    "lodash": "^4.17.4"
+  }
+}
