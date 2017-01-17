@@ -1,17 +1,21 @@
 'use strict';
 
-const _ 			     = require('lodash'),
-			BbPromise    = require('bluebird'),
-			cfHelper     = require('./cloudFormation'),
-			awsConstants = require('./constants');
+const _ 			      = require('lodash'),
+			BbPromise     = require('bluebird'),
+			cfHelper      = require('./cloudFormation'),
+			promiseHelper = require('./promise'),
+			awsConstants  = require('./constants');
 
 class Plugin {
 	constructor(serverless) {
     this.serverless = serverless;
 		this.provider = this.serverless.getProvider('aws');
-		this.service = this.serverless.service.service;
-		this.region = this.provider.getRegion();
-		this.stage = this.provider.getStage();
+		this.functions = this.serverless.service.functions;
+
+		this.settings = {};
+		this.settings.service = this.serverless.service.service;
+		this.settings.region = this.provider.getRegion();
+		this.settings.stage = this.provider.getStage();
 
 		this.hooks = {
 			'deploy:compileEvents': () => BbPromise.bind(this).then(this.createResources),
@@ -28,7 +32,7 @@ class Plugin {
 	configureFunctions() {
 		return BbPromise.bind(this)
 			.then(this.getAccountId)
-			.then(this.loopFunctions(this.updateLambdaConfig));
+			.then(() => promiseHelper.each(this.functions, this.updateLambdaConfig.bind(this)));
 	}
 
 	getAccountId() {
@@ -39,25 +43,12 @@ class Plugin {
 		return this.provider.request('STS',
       'getCallerIdentity',
       {},
-      this.stage,
-      this.region)
+      this.settings.stage,
+      this.settings.region)
 		.then((res) => {
-			this.accountId = res.Account;
+			this.settings.accountId = res.Account;
 			return BbPromise.resolve();
 		});
-	}
-
-	loopFunctions(fn) {
-		var self = this;
-		var promise = BbPromise.resolve();
-
-		_.each(this.serverless.service.functions, (fnDef, fnName) => {
-			if (self.validateDeadLetterConfig(fnDef.deadLetterConfig)) {
-				promise.then(() => fn.call(self, fnDef, fnName));
-			}
-		});
-
-		return promise;
 	}
 
 	validateDeadLetterConfig(config) {
@@ -67,63 +58,61 @@ class Plugin {
 		return awsConstants[_.lowerCase(config.type)] !== undefined;
 	}
 
-	addCfResources(resources) {
-		_.merge(this.serverless.service.provider.compiledCloudFormationTemplate.Resources, resources);
-	}
-
 	createDeadLetterResources() {
 		var self = this;
-		var policies = {};
+		var origCf = self.serverless.service
+			.provider
+			.compiledCloudFormationTemplate
+			.Resources;
 
-		return this.loopFunctions((fnDef, fnName) => {
-			const deadLetterConfig = fnDef.deadLetterConfig;
-			const resource = cfHelper.getDeadLetterResource(deadLetterConfig.type, deadLetterConfig.name);
-			self.addCfResources(resource);
+		const newCf = _.map(self.functions, function(value, prop) {
+  		return {
+				fnName: prop,
+				fnDef: value
+			};
+		}).reduce(self.createFunctionResources.bind(self), origCf);
 
-			const deadLetterPolicyName = cfHelper.getDeadLetterPolicyName(deadLetterConfig.type);
-			if (!policies[deadLetterPolicyName]) {
-				_.merge(policies, cfHelper.getDeadLetterPolicy(deadLetterConfig.type, {
-					region: self.region,
-					stage: self.stage,
-					service: self.service,
-					accountId: self.accountId
-				}));
-			}
+		_.merge(origCf, newCf);
 
-			const cfTemplate = self.serverless.service.provider.compiledCloudFormationTemplate;
-			const roleName = cfTemplate.Resources[`${_.upperFirst(fnName)}LambdaFunction`]
-				.Properties
-				.Role["Fn::GetAtt"][0];
+		return BbPromise.resolve();
+	}
 
-			const deadLetterPolicy = policies[deadLetterPolicyName];
-			if (!deadLetterPolicy.DependsOn.includes(roleName)) {
-				deadLetterPolicy.DependsOn.push(roleName);
-				deadLetterPolicy.Properties.Roles.push({
-					Ref: roleName
-				});
-			}
-			return BbPromise.resolve();
-		})
-		.then(() => {
-			this.addCfResources(policies);
-			return BbPromise.resolve();
-		})
-	};
+	createFunctionResources(cf, fnConfig) {
+		const dlConfig = fnConfig.fnDef.deadLetterConfig;
+		if (!this.validateDeadLetterConfig(dlConfig)) {
+			return cf;
+		}
+
+		const resource = cfHelper.getDeadLetterResource(dlConfig.type, dlConfig.name);
+		const dlPolicyName = cfHelper.getDeadLetterPolicyName(dlConfig.type);
+		const origPolicy = cf[dlPolicyName]
+			? { [dlPolicyName]: origPolicy }
+			: cfHelper.getDeadLetterPolicy(dlConfig.type, this.settings);
+
+		const fnRoleName = cf[`${_.upperFirst(fnConfig.fnName)}LambdaFunction`].Properties.Role["Fn::GetAtt"][0];
+		const newPolicy = cfHelper.addRoleToPolicy(origPolicy, fnRoleName);
+
+		return _.merge({}, cf, resource, newPolicy);
+	}
 
   updateLambdaConfig(fnDef, fnName) {
-		const deadLetterConfig = fnDef.deadLetterConfig;
+		const dlConfig = fnDef.deadLetterConfig;
+		if (!this.validateDeadLetterConfig(dlConfig)) {
+			return BbPromise.resolve();
+		}
+
 		const params = {
 			FunctionName: fnDef.name,
 			DeadLetterConfig: {
-				TargetArn: `arn:aws:${_.lowerCase(deadLetterConfig.type)}:${this.region}:${this.accountId}:${deadLetterConfig.name}`
+				TargetArn: `arn:aws:${_.lowerCase(dlConfig.type)}:${this.settings.region}:${this.settings.accountId}:${dlConfig.name}`
 			}
 		};
 
 		return this.provider.request('Lambda',
       'updateFunctionConfiguration',
       params,
-      this.stage,
-      this.region
+      this.settings.stage,
+      this.settings.region
 		).then(() => {
 			this.serverless.cli.log(`DeadLetterTarget configured for ${fnDef.name}`);
 			return BbPromise.resolve();

@@ -1,7 +1,7 @@
 'use strict';
 
-const _            = require('lodash');
-const awsConstants = require('./constants');
+const _            = require('lodash'),
+      awsConstants = require('./constants');
 
 function getDeadLetterResource(type, name) {
   const vals = awsConstants[_.lowerCase(type)];
@@ -50,8 +50,26 @@ function getDeadLetterPolicy(type, settings) {
   };
 }
 
+function addRoleToPolicy(policy, roleName) {
+	const dlPolicyName = Object.keys(policy)[0];
+	const dependencies = {
+		[dlPolicyName]: {
+			DependsOn: _.union(policy[dlPolicyName].DependsOn, [roleName])
+		}
+	};
+	const roles = {
+		[dlPolicyName]: {
+			Properties: {
+				Roles: _.union(policy[dlPolicyName].Properties.Roles, [{ Ref: roleName }])
+			}
+		}
+	};
+	return _.merge({}, policy, dependencies, roles);
+}
+
 module.exports = {
   getDeadLetterPolicy: getDeadLetterPolicy,
   getDeadLetterPolicyName: getDeadLetterPolicyName,
-  getDeadLetterResource: getDeadLetterResource
+  getDeadLetterResource: getDeadLetterResource,
+  addRoleToPolicy: addRoleToPolicy
 };
