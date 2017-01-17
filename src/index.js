@@ -1,124 +1,142 @@
 'use strict';
 
-const _ = require('lodash'),
-		AWS = require('aws-sdk');
+const _ 			     = require('lodash'),
+			BbPromise    = require('bluebird'),
+			cfHelper     = require('./cloudFormation'),
+			awsConstants = require('./constants');
 
 class Plugin {
-	constructor(serverless, options) {
+	constructor(serverless) {
     this.serverless = serverless;
-    this.options = options;
-
-		this.initAws();
+		this.provider = this.serverless.getProvider('aws');
+		this.service = this.serverless.service.service;
+		this.region = this.provider.getRegion();
+		this.stage = this.provider.getStage();
 
 		this.hooks = {
-			// 'deploy:compileEvents': this.loopEvents.bind(this, this.createDeadLetterTargets),
-			'deploy:deploy': this.loopEvents.bind(this, this.configureDeadLetterTarget)
+			'deploy:compileEvents': () => BbPromise.bind(this).then(this.createResources),
+			'deploy:deploy': () => BbPromise.bind(this).then(this.configureFunctions)
 		};
   }
 
-	initAws() {
-		this.lambda = new AWS.Lambda({ region: 'eu-west-1'});
+	createResources() {
+		return BbPromise.bind(this)
+			.then(this.getAccountId)
+			.then(this.createDeadLetterResources);
 	}
 
-	loopEvents(fn) {
-		var self = this;
+	configureFunctions() {
+		return BbPromise.bind(this)
+			.then(this.getAccountId)
+			.then(this.loopFunctions(this.updateLambdaConfig));
+	}
 
-		_.each(this.serverless.service.functions, function(fnDef, fnName) {
-			if (fnDef.deadLetterConfig && fnDef.deadLetterConfig.targetArn) {
-				fn.call(self, fnName, fnDef);
-			}
+	getAccountId() {
+		if (this.accountId) {
+			return BbPromise.resolve();
+		}
+
+		return this.provider.request('STS',
+      'getCallerIdentity',
+      {},
+      this.stage,
+      this.region)
+		.then((res) => {
+			this.accountId = res.Account;
+			return BbPromise.resolve();
 		});
 	}
 
-	// addCfResources(resources) {
-	// 	_.merge(this.serverless.service.provider.compiledCloudFormationTemplate.Resources, resources);
-	// }
-	//
-	// getCfSnsTopic(topicName) {
-	// 	return {
-	// 		Type: 'AWS::SNS::Topic',
-	// 		Properties: {
-	// 			TopicName: topicName,
-	// 		}
-	// 	};
-	// }
-	//
-	// getCfSqsQueue(queueName) {
-	// 	return {
-	// 		Type: 'AWS::SQS::Queue',
-	// 		Properties: {
-	// 			QueueName: queueName,
-	// 		}
-	// 	};
-	// }
+	loopFunctions(fn) {
+		var self = this;
+		var promise = BbPromise.resolve();
 
-	// amendLambdaPolicy(targetName, type) {
-	// 	var policy = {
-  //     Effect: 'Allow',
-  //     Action: [
-  //       'sqs:SendMessage'
-  //     ],
-	// 		Resource: `arn:aws:sqs:eu-west-1::${targetName}`
-  //   };
+		_.each(this.serverless.service.functions, (fnDef, fnName) => {
+			if (self.validateDeadLetterConfig(fnDef.deadLetterConfig)) {
+				promise.then(() => fn.call(self, fnDef, fnName));
+			}
+		});
 
-		// var statement = this.serverless.service.provider.compiledCloudFormationTemplate
-		// 	.Resources
-		// 	.IamPolicyLambda
-		// 	.Properties
-		// 	.PolicyDocument
-		// 	.Statement;
-		//
-		// console.log(JSON.stringify(statement));
-		//
-		// statement = statement.concat(policy);
-	// 	console.log(JSON.stringify(this.serverless.service.provider.compiledCloudFormationTemplate));
-	// }
+		return promise;
+	}
 
-	// createDeadLetterTargets(fnName, fnDef) {
-	// 	var target = fnDef.deadLetterConfig.target;
-	// 	var type = fnDef.deadLetterConfig.type;
-	//
-	// 	this.addCfResources({
-	// 		[`SQSQueue${_.upperFirst(_.camelCase(target))}`]: this.getCfSqsQueue(target)
-	// 	});
-	//
-	// 	fnDef.role =
-	//
-	// 	this.createLambdaPolicy(target, type);
-	// }
+	validateDeadLetterConfig(config) {
+		if (!config || !config.type || !config.name) {
+			return false;
+		}
+		return awsConstants[_.lowerCase(config.type)] !== undefined;
+	}
 
-	// addSendPermission(fnName, fnDef) {
-		// var permission = {
-		// 	FunctionName: { 'Fn::GetAtt': [ fnRef, 'Arn' ] },
-		// 	Action: 'lambda:InvokeFunction'
-		// 	Principal: "sqs.amazonaws.com",
-		//
-		// }
-		// this.lambda.addPermission({
-		// 	FunctionName: fnDef.name,
-		// 	Action: 'lambda:InvokeFunction'
-		// 	Principal: "sqs.amazonaws.com",
-		//
-		// })
-	// }
+	addCfResources(resources) {
+		_.merge(this.serverless.service.provider.compiledCloudFormationTemplate.Resources, resources);
+	}
 
-  configureDeadLetterTarget(fnName, fnDef) {
-		var params = {
+	createDeadLetterResources() {
+		var self = this;
+		var policies = {};
+
+		return this.loopFunctions((fnDef, fnName) => {
+			const deadLetterConfig = fnDef.deadLetterConfig;
+			const resource = cfHelper.getDeadLetterResource(deadLetterConfig.type, deadLetterConfig.name);
+			self.addCfResources(resource);
+
+			const deadLetterPolicyName = cfHelper.getDeadLetterPolicyName(deadLetterConfig.type);
+			if (!policies[deadLetterPolicyName]) {
+				_.merge(policies, cfHelper.getDeadLetterPolicy(deadLetterConfig.type, {
+					region: self.region,
+					stage: self.stage,
+					service: self.service,
+					accountId: self.accountId
+				}));
+			}
+
+			const cfTemplate = self.serverless.service.provider.compiledCloudFormationTemplate;
+			const roleName = cfTemplate.Resources[`${_.upperFirst(fnName)}LambdaFunction`]
+				.Properties
+				.Role["Fn::GetAtt"][0];
+
+			const deadLetterPolicy = policies[deadLetterPolicyName];
+			if (!deadLetterPolicy.DependsOn.includes(roleName)) {
+				deadLetterPolicy.DependsOn.push(roleName);
+				deadLetterPolicy.Properties.Roles.push({
+					Ref: roleName
+				});
+			}
+			return BbPromise.resolve();
+		})
+		.then(() => {
+			this.addCfResources(policies);
+			return BbPromise.resolve();
+		})
+	};
+
+  updateLambdaConfig(fnDef, fnName) {
+		const deadLetterConfig = fnDef.deadLetterConfig;
+		const params = {
 			FunctionName: fnDef.name,
 			DeadLetterConfig: {
-				TargetArn: fnDef.deadLetterConfig.targetArn
+				TargetArn: `arn:aws:${_.lowerCase(deadLetterConfig.type)}:${this.region}:${this.accountId}:${deadLetterConfig.name}`
 			}
 		};
 
-		this.lambda.updateFunctionConfiguration(params)
-			.promise()
-			.then((res) => {
-				this.serverless.cli.log(`DeadLetterTarget configured for ${fnDef.name}`);
-			})
-			.catch((err) => {
-				throw new this.serverless.classes.Error(err.message);
-			});
+		return this.provider.request('Lambda',
+      'updateFunctionConfiguration',
+      params,
+      this.stage,
+      this.region
+		).then(() => {
+			this.serverless.cli.log(`DeadLetterTarget configured for ${fnDef.name}`);
+			return BbPromise.resolve();
+		})
+		.catch((err) => {
+			throw new this.serverless.classes.Error(err.message);
+		});
   }
+
+	// isArn(targetName) {
+	// 	var regexp = /arn:aws:([a-zA-Z0-9\-])+:([a-z]{2}-[a-z]+-\d{1})?:(\d{12})?:(.*)/;
+	// 	return targetName.match(regexp) !== null;
+	// }
 }
 
 module.exports = Plugin;
