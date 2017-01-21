@@ -1,44 +1,40 @@
 'use strict';
 
 const _            = require('lodash'),
-      awsConstants = require('./constants');
+      namingHelper = require('./naming'),
+      definitions  = require('./definitions')();
 
 function getDeadLetterResource(type, name) {
-  const vals = awsConstants[_.lowerCase(type)];
+  const defs = definitions[_.lowerCase(type)];
   const deadLetterNameSuffix = `${_.upperFirst(_.camelCase(name))}LambdaFunctionError`;
 
   return {
-    [`${_.upperCase(type)}${_.upperFirst(vals.resource)}${_.upperFirst(_.camelCase(name))}`]: {
-      Type: `AWS::${_.upperCase(type)}::${_.upperFirst(vals.resource)}`,
+    [`${_.upperCase(type)}${_.upperFirst(defs.resource)}${_.upperFirst(_.camelCase(name))}`]: {
+      Type: `AWS::${_.upperCase(type)}::${_.upperFirst(defs.resource)}`,
       Properties: {
-        [`${_.upperFirst(vals.resource)}Name`]: name
+        [`${_.upperFirst(defs.resource)}Name`]: name
       }
     }
   };
 }
 
-function getDeadLetterPolicyName(type) {
-  const vals = awsConstants[_.lowerCase(type)];
-  return `IamPolicyDeadLetter${_.upperFirst(vals.resource)}`;
-}
-
 function getDeadLetterPolicy(type, settings) {
   const awsService = _.lowerCase(type);
-  const vals = awsConstants[awsService];
+  const defs = definitions[awsService];
 
   return {
-    [getDeadLetterPolicyName(type)]: {
+    [namingHelper.getDeadLetterPolicyName(type)]: {
       Type: 'AWS::IAM::Policy',
       DependsOn: [],
       Properties: {
-        PolicyName: `${settings.stage}-${settings.service}-deadletter${vals.resource}`,
+        PolicyName: `${settings.stage}-${settings.service}-deadletter${defs.resource}`,
         PolicyDocument: {
           Version: "2012-10-17",
           Statement: [
             {
               Effect: 'Allow',
               Action: [
-                vals.action
+                defs.action
               ],
               Resource: `arn:aws:${awsService}:${settings.region}:${settings.accountId}:*`
             }
@@ -69,7 +65,6 @@ function addRoleToPolicy(policy, roleName) {
 
 module.exports = {
   getDeadLetterPolicy: getDeadLetterPolicy,
-  getDeadLetterPolicyName: getDeadLetterPolicyName,
   getDeadLetterResource: getDeadLetterResource,
   addRoleToPolicy: addRoleToPolicy
 };

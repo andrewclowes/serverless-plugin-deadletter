@@ -1,4 +1,6 @@
-module.exports = {
+'use strict';
+
+const definitions = {
   sns: {
     resource: 'topic',
     action: 'sns:Publish'
@@ -8,3 +10,5 @@ module.exports = {
     action: 'sqs:SendMessage'
   }
 };
+
+module.exports = () => Object.assign({}, definitions);
