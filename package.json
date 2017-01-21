@@ -1,7 +1,7 @@
 {
   "name": "serverless-plugin-deadletter",
   "version": "1.0.0",
-  "description": "Plugin for adding DeadLetter funcionality to Lambda functions that are invoked by asynchronous event sources.",
+  "description": "Serverless plugin for adding DeadLetter functionality to Lambda functions that are invoked by asynchronous event sources",
   "main": "src/index.js",
   "repository": {
     "url": "https://github.com/andrewclowes/serverless-plugin-deadletter",
