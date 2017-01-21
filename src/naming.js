@@ -17,8 +17,13 @@ function getDeadLetterTargetArn(type, targetName, settings) {
   return `arn:aws:${_.lowerCase(type)}:${settings.region}:${settings.accountId}:${targetName}`;
 }
 
+function getLambdaFunctionLogicalId(fnName) {
+  return `${_.upperFirst(fnName)}LambdaFunction`;
+}
+
 module.exports = {
   isArn: isArn,
   getDeadLetterPolicyName: getDeadLetterPolicyName,
-  getDeadLetterTargetArn: getDeadLetterTargetArn
+  getDeadLetterTargetArn: getDeadLetterTargetArn,
+  getLambdaFunctionLogicalId: getLambdaFunctionLogicalId
 }

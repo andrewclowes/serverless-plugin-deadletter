@@ -56,7 +56,8 @@ class Plugin {
 			? { [dlPolicyName]: origPolicy }
 			: templateHelper.getDeadLetterPolicy(dlConfig.type, settings);
 
-		const fnRoleName = cf[`${_.upperFirst(fnConfig.fnName)}LambdaFunction`].Properties.Role["Fn::GetAtt"][0];
+		const fnRoleName = cf[namingHelper.getLambdaFunctionLogicalId(fnConfig.fnName)]
+      .Properties.Role["Fn::GetAtt"][0];
 		const newPolicy = templateHelper.addRoleToPolicy(origPolicy, fnRoleName);
 
     return _.merge({}, cf, resource, newPolicy);
