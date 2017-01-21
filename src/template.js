@@ -30,15 +30,13 @@ function getDeadLetterPolicy(type, settings) {
         PolicyName: `${settings.stage}-${settings.service}-deadletter${defs.resource}`,
         PolicyDocument: {
           Version: "2012-10-17",
-          Statement: [
-            {
-              Effect: 'Allow',
-              Action: [
-                defs.action
-              ],
-              Resource: `arn:aws:${awsService}:${settings.region}:${settings.accountId}:*`
-            }
-          ]
+          Statement: [{
+            Effect: 'Allow',
+            Action: [
+              defs.action
+            ],
+            Resource: `arn:aws:${awsService}:${settings.region}:${settings.accountId}:*`
+          }]
         },
         Roles: []
       }
@@ -47,20 +45,22 @@ function getDeadLetterPolicy(type, settings) {
 }
 
 function addRoleToPolicy(policy, roleName) {
-	const dlPolicyName = Object.keys(policy)[0];
-	const dependencies = {
-		[dlPolicyName]: {
-			DependsOn: _.union(policy[dlPolicyName].DependsOn, [roleName])
-		}
-	};
-	const roles = {
-		[dlPolicyName]: {
-			Properties: {
-				Roles: _.union(policy[dlPolicyName].Properties.Roles, [{ Ref: roleName }])
-			}
-		}
-	};
-	return _.merge({}, policy, dependencies, roles);
+  const dlPolicyName = Object.keys(policy)[0];
+  const dependencies = {
+    [dlPolicyName]: {
+      DependsOn: _.union(policy[dlPolicyName].DependsOn, [roleName])
+    }
+  };
+  const roles = {
+    [dlPolicyName]: {
+      Properties: {
+        Roles: _.union(policy[dlPolicyName].Properties.Roles, [{
+          Ref: roleName
+        }])
+      }
+    }
+  };
+  return _.merge({}, policy, dependencies, roles);
 }
 
 module.exports = {
